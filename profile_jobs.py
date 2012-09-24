@@ -203,8 +203,6 @@ def make_final_table(jobs):
     print steps
     result = np.array(steps, dtype=[('step', 'S100')])
 
-    footer = ('Total',)
-    
     for (name, table) in jobs:
         print "Name is " + name
         
@@ -217,8 +215,6 @@ def make_final_table(jobs):
              table['total'],
              table['median']
              ])
-
-        footer += (0, sum(table['total']), sum(table['median']))
 
     for (name, table) in jobs:
 
@@ -247,17 +243,35 @@ def make_final_table(jobs):
              ])
 
 
-    for (name, table) in jobs:
-        footer += (
-            sum(result['%s_total_pct' % name]),
-            sum(result['%s_median_pct' % name]),
-            255, 255)
-        
-    return np.array(list(result) + [footer], dtype=result.dtype)
+    return result
+#    return np.array(list(result) + [footer], dtype=result.dtype)
+
+def calc_gain(table, job_names):
+    baseline_total_secs = table['%s_total' % job_names[0]]
+    baseline_median_secs = table['%s_median' % job_names[0]]
+
+    for name in job_names[1:]:
+        stacked_gain = baseline_total_secs  - table['%s_total' % name]
+        median_gain  = baseline_median_secs - table['%s_median' % name]
+
+        stacked_pct_gain = stacked_gain / sum(baseline_total_secs)
+        median_pct_gain  = median_gain  / sum(baseline_median_secs)
+
+        table = append_fields(table, 
+                      ['%s_stacked_gain' % name,
+                       '%s_stacked_pct_gain' % name,
+                       '%s_median_gain' % name,
+                       '%s_median_pct_gain' % name,
+                       ],
+                      [stacked_gain, 100. * stacked_pct_gain,
+                       median_gain,  100. * median_pct_gain]
+                      )
+    return table
 
 def print_table(filename, table, job_names):
 
-
+    table = calc_gain(table, job_names)
+    print table.dtype
     with open(filename, 'w') as out:
         out.write("""
 
@@ -273,12 +287,20 @@ def print_table(filename, table, job_names):
           <th>Step</th>
 """)
 
+        is_first = True
+
         for j in job_names:
             out.write("<th>%s chunks</th>" % j)
             out.write("<th>%s total</th>"  % j)
             out.write("<th>(%)</th>")
             out.write("<th>%s wallclock</th>" % j)
             out.write("<th>(%)</th>")
+            if not is_first:
+                out.write('<th>Stacked gain</th>')
+                out.write('<th>(%)</th>')
+                out.write('<th>Median gain</th>')
+                out.write('<th>(%)</th>')
+            is_first = False
         
         out.write("""
         </tr>
@@ -290,6 +312,8 @@ def print_table(filename, table, job_names):
         <tr>
           <td>%s</td>""" % row['step'])
             
+            is_first = True
+
             for j in job_names:
 
                 total_intensity = row['%s_total_intensity' % j]
@@ -303,7 +327,42 @@ def print_table(filename, table, job_names):
                 out.write("<td bgcolor='%s'>%.2f%%</td>" % (total_color, row['%s_total_pct'  % j]))
                 out.write("<td>%d</td>" % row['%s_median' % j])
                 out.write("<td bgcolor='%s'>%.2f%%</td>" % (median_color, row['%s_median_pct' % j]))
+
+                if not is_first:
+                    out.write('<td>%d</td>' % row['%s_stacked_gain' % j])
+                    out.write('<td>%.2f</td>' % row['%s_stacked_pct_gain' % j])
+                    out.write('<td>%d</td>' % row['%s_median_gain' % j])
+                    out.write('<td>%.2f</td>' % row['%s_median_pct_gain' % j])
+                is_first = False
+            out.write("""
+        </tr>""")
+
+        out.write("<tr><td>Total</td>")
+
+        is_first = True
+        for j in job_names:
+
+            total_intensity = row['%s_total_intensity' % j]
+            median_intensity = row['%s_median_intensity' % j]
+
+            total_color  = '#ff%02x%02x' % (total_intensity, total_intensity)
+            median_color = '#ff%02x%02x' % (median_intensity, median_intensity)
+            
+            out.write("<td></td>")
+            out.write("<td>%d</td>" % sum(table['%s_total' % j]))
+            out.write("<td>%.2f%%</td>" % sum(table['%s_total_pct' % j]))
+            out.write("<td>%d</td>" % sum(table['%s_median' % j]))
+            out.write("<td>%.2f%%</td>" % sum(table['%s_median_pct' % j]))
+            
+            if not is_first:
+                out.write('<td>%d</td>' % sum(table['%s_stacked_gain' % j]))
+                out.write('<td>%.2f</td>' % sum(table['%s_stacked_pct_gain' % j]))
+                out.write('<td>%d</td>' % sum(table['%s_median_gain' % j]))
+                out.write('<td>%.2f</td>' % sum(table['%s_median_pct_gain' % j]))
+            is_first = False
+        
         out.write("""
+        </tr>
       </tbody>
     </table>
   </body>
