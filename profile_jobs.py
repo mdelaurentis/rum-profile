@@ -8,6 +8,8 @@ import os
 from collections import namedtuple
 from numpy.lib.recfunctions import append_fields
 
+seconds_per_hour = 60.0 * 60.0
+
 Event = namedtuple('Event', 'timestamp type step job')
 Proc  = namedtuple('Proc', 'step start stop job')
 
@@ -19,6 +21,18 @@ step_mapping = {
     'Run blat on unmapped reads'        : 'Run BLAT',
     'Parse blat output'                 : 'Run BLAT',
     'Run mdust on unmapped reads'       : 'Run BLAT',
+    'Sort junctions (all, bed) by location' : 'Sort junctions',
+    'Sort junctions (all, rum) by location' : 'Sort junctions',
+    'Sort junctions (high-quality, bed) by location' : 'Sort junctions',
+    'Finish mapping stats'      : 'Other post-processing',
+    'Merge SAM headers'          : 'Other post-processing',
+    'Sort junctions'             : 'Other post-processing',
+    'Get inferred internal exons'             : 'Other post-processing',
+    'Merge quants'             : 'Other post-processing',
+    'Sort junctions'             : 'Other post-processing',
+    'Remove duplicates from NU' : 'Other processing',
+    'Make unmapped reads file for blat' : 'Other processing',
+    
     }
 
 def parse_log_file(filename, job_name):
@@ -101,7 +115,7 @@ def procs_to_array(procs):
         times = np.array(times_for_step[s])
         chunks = len(times)
         total  = sum(times)
-        med    = np.median(times)
+        med    = max(times)
         table.append((s, chunks, total, med))
     
     return np.array(table, dtype=[
@@ -291,14 +305,14 @@ def print_table(filename, table, job_names):
 
         for j in job_names:
             out.write("<th>%s chunks</th>" % j)
-            out.write("<th>%s total</th>"  % j)
+            out.write("<th>%s CPU hours</th>"  % j)
             out.write("<th>(%)</th>")
-            out.write("<th>%s wallclock</th>" % j)
+            out.write("<th>%s wallclock hours</th>" % j)
             out.write("<th>(%)</th>")
             if not is_first:
-                out.write('<th>Stacked gain</th>')
+                out.write('<th>CPU hours gained</th>')
                 out.write('<th>(%)</th>')
-                out.write('<th>Median gain</th>')
+                out.write('<th>Wallclock hours gained</th>')
                 out.write('<th>(%)</th>')
             is_first = False
         
@@ -323,16 +337,16 @@ def print_table(filename, table, job_names):
                 median_color = '#ff%02x%02x' % (median_intensity, median_intensity)
                 
                 out.write("<td>%d</td>" % row['%s_chunks' % j])
-                out.write("<td>%d</td>" % row['%s_total'  % j])
+                out.write("<td>%.2f</td>" % (row['%s_total'  % j] / seconds_per_hour))
                 out.write("<td bgcolor='%s'>%.2f%%</td>" % (total_color, row['%s_total_pct'  % j]))
-                out.write("<td>%d</td>" % row['%s_median' % j])
+                out.write("<td>%.2f</td>" % (row['%s_median' % j] / seconds_per_hour))
                 out.write("<td bgcolor='%s'>%.2f%%</td>" % (median_color, row['%s_median_pct' % j]))
 
                 if not is_first:
                     out.write('<td>%d</td>' % row['%s_stacked_gain' % j])
-                    out.write('<td>%.2f</td>' % row['%s_stacked_pct_gain' % j])
+                    out.write('<td>%.2f%%</td>' % row['%s_stacked_pct_gain' % j])
                     out.write('<td>%d</td>' % row['%s_median_gain' % j])
-                    out.write('<td>%.2f</td>' % row['%s_median_pct_gain' % j])
+                    out.write('<td>%.2f%%</td>' % row['%s_median_pct_gain' % j])
                 is_first = False
             out.write("""
         </tr>""")
@@ -356,9 +370,9 @@ def print_table(filename, table, job_names):
             
             if not is_first:
                 out.write('<td>%d</td>' % sum(table['%s_stacked_gain' % j]))
-                out.write('<td>%.2f</td>' % sum(table['%s_stacked_pct_gain' % j]))
+                out.write('<td>%.2f%%</td>' % sum(table['%s_stacked_pct_gain' % j]))
                 out.write('<td>%d</td>' % sum(table['%s_median_gain' % j]))
-                out.write('<td>%.2f</td>' % sum(table['%s_median_pct_gain' % j]))
+                out.write('<td>%.2f%%</td>' % sum(table['%s_median_pct_gain' % j]))
             is_first = False
         
         out.write("""
@@ -368,6 +382,7 @@ def print_table(filename, table, job_names):
   </body>
 </html>
 """)
+
 
 
 main()
