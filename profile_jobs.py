@@ -4,6 +4,9 @@ import re
 import sys
 import time
 import os
+from lxml.html import builder as E
+import lxml
+
 
 from collections import namedtuple
 from numpy.lib.recfunctions import append_fields
@@ -113,26 +116,13 @@ def procs_to_array(procs):
     table = []
     for s in steps:
         times = np.array(times_for_step[s])
-        chunks = len(times)
-        total  = sum(times)
-        med    = max(times)
-        table.append((s, chunks, total, med))
+        table.append((s, len(times), sum(times), max(times)))
     
     return np.array(table, dtype=[
             ('step', 'S100'),
             ('chunks', int),
             ('total',  float),
             ('median', float)])
-
-
-def summarize_steps(steps):
-    for (step, times) in steps:
-        chunks = len(times)
-        total  = sum(times)
-        med    = np.median(times)
-
-
-
 
 def rename_steps(step_to_times):
     result = {}
@@ -148,18 +138,12 @@ def rename_steps(step_to_times):
 
 def main():
 
-    dtype=[('step', 'S100')]
     jobs = []
 
     for arg in sys.argv[1:]:
         
         (job_name, dir) = arg.split("=")
         jobs.append((job_name, dir))
-
-        dtype.extend([
-                ('%s_chunks'      % job_name, int),
-                ('%s_total_time'  % job_name, int),
-                ('%s_median_time' % job_name, int)])
 
     stats = {}
 
@@ -214,7 +198,6 @@ def make_final_table(jobs):
     columns = []
     did_step = False
     steps = [(step,) for step in jobs[0][1]['step']]
-    print steps
     result = np.array(steps, dtype=[('step', 'S100')])
 
     for (name, table) in jobs:
@@ -223,8 +206,8 @@ def make_final_table(jobs):
         result = append_fields(
             result,
             ['%s_chunks' % name,
-             '%s_total'  % name,
-             '%s_median' % name],
+             '%s_cpu'  % name,
+             '%s_wc' % name],
             [table['chunks'],
              table['total'],
              table['median']
@@ -232,157 +215,147 @@ def make_final_table(jobs):
 
     for (name, table) in jobs:
 
-        totals  = result['%s_total' % name]
-        medians = result['%s_median' % name]
+        cpu_times  = result['%s_cpu' % name]
+        wc_times = result['%s_wc' % name]
 
-        total_intensity  = (totals  - min(totals))  / (max(totals)  - min(totals))
-        median_intensity = (medians - min(medians)) / (max(medians) - min(medians))
+        cpu_intensity  = (cpu_times  - min(cpu_times))  / (max(cpu_times)  - min(cpu_times))
+        wc_intensity = (wc_times - min(wc_times)) / (max(wc_times) - min(wc_times))
                 
-        total_intensity = (255 - (total_intensity * 255))
-        median_intensity = (255 - (median_intensity * 255))
-
-        print "Total intensity is " + str(total_intensity)
+        cpu_intensity = (255 - (cpu_intensity * 255))
+        wc_intensity = (255 - (wc_intensity * 255))
 
         result = append_fields(
             result,
-            ['%s_total_pct'        % name,
-             '%s_median_pct'       % name,
-             '%s_total_intensity'  % name,
-             '%s_median_intensity' % name,
+            ['%s_cpu_pct'        % name,
+             '%s_wc_pct'       % name,
+             '%s_cpu_intensity'  % name,
+             '%s_wc_intensity' % name,
              ],
-            [100 * result['%s_total'  % name] / sum(result['%s_total'  % name]),
-             100 * result['%s_median' % name] / sum(result['%s_median' % name]),
-             total_intensity,
-             median_intensity
+            [100 * cpu_times / sum(cpu_times),
+             100 * wc_times / sum(wc_times),
+             cpu_intensity,
+             wc_intensity
              ])
-
 
     return result
 #    return np.array(list(result) + [footer], dtype=result.dtype)
 
 def calc_gain(table, job_names):
-    baseline_total_secs = table['%s_total' % job_names[0]]
-    baseline_median_secs = table['%s_median' % job_names[0]]
+    baseline_cpu_secs = table['%s_cpu' % job_names[0]]
+    baseline_wc_secs = table['%s_wc' % job_names[0]]
 
     for name in job_names[1:]:
-        stacked_gain = baseline_total_secs  - table['%s_total' % name]
-        median_gain  = baseline_median_secs - table['%s_median' % name]
+        stacked_gain = baseline_cpu_secs  - table['%s_cpu' % name]
+        median_gain  = baseline_wc_secs - table['%s_wc' % name]
 
-        stacked_pct_gain = stacked_gain / sum(baseline_total_secs)
-        median_pct_gain  = median_gain  / sum(baseline_median_secs)
+        stacked_pct_gain = stacked_gain / sum(baseline_cpu_secs)
+        wc_pct_gain  = median_gain  / sum(baseline_wc_secs)
 
         table = append_fields(table, 
                       ['%s_stacked_gain' % name,
                        '%s_stacked_pct_gain' % name,
-                       '%s_median_gain' % name,
-                       '%s_median_pct_gain' % name,
+                       '%s_wc_gain' % name,
+                       '%s_wc_pct_gain' % name,
                        ],
                       [stacked_gain, 100. * stacked_pct_gain,
-                       median_gain,  100. * median_pct_gain]
+                       median_gain,  100. * wc_pct_gain]
                       )
     return table
 
 def print_table(filename, table, job_names):
 
     table = calc_gain(table, job_names)
-    print table.dtype
+
+    newout = open("rum_profile/foo.html", 'w')
+
     with open(filename, 'w') as out:
-        out.write("""
-
-<html>
-  <head>
-    <link rel="stylesheet" type="text/css" href="profile.css"></link>
-  </head>
-  <body>
-    <table>
-      <thead>
-
-        <tr>
-          <th>Step</th>
-""")
 
         is_first = True
 
+
+
+        headers = []
+
         for j in job_names:
-            out.write("<th>%s chunks</th>" % j)
-            out.write("<th>%s CPU hours</th>"  % j)
-            out.write("<th>(%)</th>")
-            out.write("<th>%s wallclock hours</th>" % j)
-            out.write("<th>(%)</th>")
+            headers.extend(['%s chunks' % j,
+                            '%s CPU hours' % j,
+                            '(%)',
+                            '%s wallclock hours' % j,
+                            '(%)'])
             if not is_first:
-                out.write('<th>CPU hours gained</th>')
-                out.write('<th>(%)</th>')
-                out.write('<th>Wallclock hours gained</th>')
-                out.write('<th>(%)</th>')
+                headers.extend(['CPU hours gained',
+                                '(%)',
+                                'Wallclock hours gained',
+                                '(%)'])
             is_first = False
-        
-        out.write("""
-        </tr>
-      </thead>
-      <tbody>""")
+
+        header_row = E.TR(E.TH('Step'))        
+        for h in headers:
+            header_row.append(E.TH(h))
+
+        data_rows = []
 
         for row in table:
-            out.write("""
-        <tr>
-          <td>%s</td>""" % row['step'])
             
             is_first = True
+            
+            tr = E.TR(E.TD(str(row['step'])))
 
             for j in job_names:
 
-                total_intensity = row['%s_total_intensity' % j]
-                median_intensity = row['%s_median_intensity' % j]
+                cpu_intensity  = row['%s_cpu_intensity' % j]
+                wc_intensity = row['%s_wc_intensity' % j]
 
-                total_color  = '#ff%02x%02x' % (total_intensity, total_intensity)
-                median_color = '#ff%02x%02x' % (median_intensity, median_intensity)
+                cpu_color  = '#ff%02x%02x' % (cpu_intensity, cpu_intensity)
+                median_color = '#ff%02x%02x' % (wc_intensity, wc_intensity)
                 
-                out.write("<td>%d</td>" % row['%s_chunks' % j])
-                out.write("<td>%.2f</td>" % (row['%s_total'  % j] / seconds_per_hour))
-                out.write("<td bgcolor='%s'>%.2f%%</td>" % (total_color, row['%s_total_pct'  % j]))
-                out.write("<td>%.2f</td>" % (row['%s_median' % j] / seconds_per_hour))
-                out.write("<td bgcolor='%s'>%.2f%%</td>" % (median_color, row['%s_median_pct' % j]))
+                tr.append(E.TD(str(row['%s_chunks' % j])))
+                tr.append(E.TD("%.2f" % (row['%s_cpu'  % j] / seconds_per_hour)))
+                tr.append(E.TD("%.2f%%" % (row['%s_cpu_pct'  % j]),
+                               bgcolor=cpu_color))
+                tr.append(E.TD("%.2f" % (row['%s_wc' % j] / seconds_per_hour)))
+                tr.append(E.TD("%.2f%%" % (row['%s_wc_pct' % j]),
+                               bgcolor=median_color))
 
                 if not is_first:
-                    out.write('<td>%d</td>' % row['%s_stacked_gain' % j])
-                    out.write('<td>%.2f%%</td>' % row['%s_stacked_pct_gain' % j])
-                    out.write('<td>%d</td>' % row['%s_median_gain' % j])
-                    out.write('<td>%.2f%%</td>' % row['%s_median_pct_gain' % j])
+                    tr.append(E.TD('%d'     % row['%s_stacked_gain' % j]))
+                    tr.append(E.TD('%.2f%%' % row['%s_stacked_pct_gain' % j]))
+                    tr.append(E.TD('%d'     % row['%s_wc_gain' % j]))
+                    tr.append(E.TD('%.2f%%' % row['%s_wc_pct_gain' % j]))
                 is_first = False
-            out.write("""
-        </tr>""")
-
-        out.write("<tr><td>Total</td>")
+            data_rows.append(tr)
 
         is_first = True
+        summary = [E.TD('Totals')]
         for j in job_names:
 
-            total_intensity = row['%s_total_intensity' % j]
-            median_intensity = row['%s_median_intensity' % j]
-
-            total_color  = '#ff%02x%02x' % (total_intensity, total_intensity)
-            median_color = '#ff%02x%02x' % (median_intensity, median_intensity)
-            
-            out.write("<td></td>")
-            out.write("<td>%d</td>" % sum(table['%s_total' % j]))
-            out.write("<td>%.2f%%</td>" % sum(table['%s_total_pct' % j]))
-            out.write("<td>%d</td>" % sum(table['%s_median' % j]))
-            out.write("<td>%.2f%%</td>" % sum(table['%s_median_pct' % j]))
+            summary.extend([
+                    E.TD(''),
+                    E.TD("%d"     % sum(table['%s_cpu' % j])),
+                    E.TD("%.2f%%" % sum(table['%s_cpu_pct' % j])),
+                    E.TD("%d"     % sum(table['%s_wc' % j])),
+                    E.TD("%.2f%%" % sum(table['%s_wc_pct' % j]))])
             
             if not is_first:
-                out.write('<td>%d</td>' % sum(table['%s_stacked_gain' % j]))
-                out.write('<td>%.2f%%</td>' % sum(table['%s_stacked_pct_gain' % j]))
-                out.write('<td>%d</td>' % sum(table['%s_median_gain' % j]))
-                out.write('<td>%.2f%%</td>' % sum(table['%s_median_pct_gain' % j]))
+                summary.extend([
+                        E.TD('%d' % sum(table['%s_stacked_gain' % j])),
+                        E.TD('%d' % sum(table['%s_stacked_pct_gain' % j])),
+                        E.TD('%d' % sum(table['%s_wc_gain' % j])),
+                        E.TD('%.2f%%' % sum(table['%s_wc_pct_gain' % j]))])
             is_first = False
-        
-        out.write("""
-        </tr>
-      </tbody>
-    </table>
-  </body>
-</html>
-""")
 
+        rows = [header_row]
+        rows.extend(data_rows)
+        rows.append(E.TR(*summary))
 
+        html = E.HTML(
+            E.HEAD(
+                E.LINK(rel='stylesheet', type='text/css', href='profile.css'),
+                E.TITLE('RUM Job Profile')),
+            E.BODY(
+                E.H1("RUM Job Profile"),
+                E.TABLE(*rows)))
+                
+        newout.write(lxml.html.tostring(html))
 
 main()
