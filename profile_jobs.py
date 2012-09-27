@@ -5,6 +5,7 @@ import sys
 import time
 import os
 from lxml.html import builder as E
+from lxml.html.builder import TR, TD, TH
 import lxml
 
 
@@ -244,22 +245,31 @@ def calc_gain(table, job_names):
     baseline_wc_secs = table['%s_wc' % job_names[0]]
 
     for name in job_names[1:]:
-        stacked_gain = baseline_cpu_secs  - table['%s_cpu' % name]
+        cpu_gain = baseline_cpu_secs  - table['%s_cpu' % name]
         median_gain  = baseline_wc_secs - table['%s_wc' % name]
 
-        stacked_pct_gain = stacked_gain / sum(baseline_cpu_secs)
+        cpu_pct_gain = cpu_gain / sum(baseline_cpu_secs)
         wc_pct_gain  = median_gain  / sum(baseline_wc_secs)
 
         table = append_fields(table, 
-                      ['%s_stacked_gain' % name,
-                       '%s_stacked_pct_gain' % name,
+                      ['%s_cpu_gain' % name,
+                       '%s_cpu_pct_gain' % name,
                        '%s_wc_gain' % name,
                        '%s_wc_pct_gain' % name,
                        ],
-                      [stacked_gain, 100. * stacked_pct_gain,
+                      [cpu_gain, 100. * cpu_pct_gain,
                        median_gain,  100. * wc_pct_gain]
                       )
     return table
+
+def td_hours(seconds):
+    return TD('%.2f' % (seconds / seconds_per_hour))
+
+def td_percent(pct, bgcolor=None):
+    if bgcolor is None:
+        return TD('%.2f%%' % pct)
+    else:
+        return TD('%.2f%%' % pct, bgcolor=bgcolor)
 
 def print_table(filename, table, job_names):
 
@@ -267,80 +277,68 @@ def print_table(filename, table, job_names):
 
     metrics = ['cpu', 'wc']
 
-    with open(filename, 'w') as out:
+    baseline = job_names[0]
 
-        is_first = True
+    with open(filename, 'w') as out:
 
         headers = []
 
+        # Build the header row
         for j in job_names:
             headers.append('%s chunks' % j)
             for m in metrics:
                 headers.extend(['%s %s hours' % (j, m), '(%)'])
-            if not is_first:
+
+            # All jobs except the baseline get "hours gained" and
+            # "percent hours gained" columns
+            if j != baseline:
                 for m in metrics:
                     headers.extend(['%s hours gained' % (m), '(%)'])
 
-            is_first = False
-
-        header_row = E.TR(E.TH('Step'))        
+        header_row = TR(TH('Step'))        
         for h in headers:
-            header_row.append(E.TH(h))
+            header_row.append(TH(h))
 
         data_rows = []
 
         for row in table:
             
-            is_first = True
-            
-            tr = E.TR(E.TD(str(row['step'])))
+            tr = TR(TD(str(row['step'])))
 
             for j in job_names:
 
-                cpu_intensity  = row['%s_cpu_intensity' % j]
-                wc_intensity = row['%s_wc_intensity' % j]
+                tr.append(TD(str(row['%s_chunks' % j])))
 
-                cpu_color  = '#ff%02x%02x' % (cpu_intensity, cpu_intensity)
-                median_color = '#ff%02x%02x' % (wc_intensity, wc_intensity)
-                
-                tr.append(E.TD(str(row['%s_chunks' % j])))
-                tr.append(E.TD("%.2f" % (row['%s_cpu'  % j] / seconds_per_hour)))
-                tr.append(E.TD("%.2f%%" % (row['%s_cpu_pct'  % j]),
-                               bgcolor=cpu_color))
-                tr.append(E.TD("%.2f" % (row['%s_wc' % j] / seconds_per_hour)))
-                tr.append(E.TD("%.2f%%" % (row['%s_wc_pct' % j]),
-                               bgcolor=median_color))
+                for m in metrics:
+                    intensity  = row['%s_%s_intensity' % (j, m)]
+                    bgcolor  = '#ff%02x%02x' % (intensity, intensity)
+                    tr.append(td_hours(row['%s_%s'  % (j, m)]))
+                    tr.append(td_percent(row['%s_%s_pct' % (j, m)], bgcolor))
 
-                if not is_first:
-                    tr.append(E.TD('%d'     % row['%s_stacked_gain' % j]))
-                    tr.append(E.TD('%.2f%%' % row['%s_stacked_pct_gain' % j]))
-                    tr.append(E.TD('%d'     % row['%s_wc_gain' % j]))
-                    tr.append(E.TD('%.2f%%' % row['%s_wc_pct_gain' % j]))
-                is_first = False
+                if j != baseline:
+                    for m in metrics:
+                        tr.append(td_hours(row['%s_%s_gain' % (j, m)]))
+                        tr.append(td_percent(row['%s_%s_pct_gain' % (j, m)]))
+
             data_rows.append(tr)
 
-        is_first = True
-        summary = [E.TD('Totals')]
+        summary = [TD('Totals')]
         for j in job_names:
-
-            summary.extend([
-                    E.TD(''),
-                    E.TD("%d"     % sum(table['%s_cpu' % j])),
-                    E.TD("%.2f%%" % sum(table['%s_cpu_pct' % j])),
-                    E.TD("%d"     % sum(table['%s_wc' % j])),
-                    E.TD("%.2f%%" % sum(table['%s_wc_pct' % j]))])
-            
-            if not is_first:
+            summary.append(TD(''))
+            for m in metrics:
                 summary.extend([
-                        E.TD('%d' % sum(table['%s_stacked_gain' % j])),
-                        E.TD('%d' % sum(table['%s_stacked_pct_gain' % j])),
-                        E.TD('%d' % sum(table['%s_wc_gain' % j])),
-                        E.TD('%.2f%%' % sum(table['%s_wc_pct_gain' % j]))])
-            is_first = False
+                        td_hours(sum(table['%s_%s' % (j, m)])),
+                        td_percent(sum(table['%s_%s_pct' % (j, m)]))])
+            
+            if j != baseline:
+                for m in metrics:
+                    summary.extend([
+                            td_hours(sum(table['%s_%s_gain' % (j, m)])),
+                            td_percent(sum(table['%s_%s_pct_gain' % (j, m)]))])
 
         rows = [header_row]
         rows.extend(data_rows)
-        rows.append(E.TR(*summary))
+        rows.append(TR(*summary))
 
         html = E.HTML(
             E.HEAD(
