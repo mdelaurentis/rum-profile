@@ -166,7 +166,13 @@ def main():
             tables.append((job_name, merged))
 
     table = make_final_table(tables)
-    print_table('rum_profile/index.html', table, [x[0] for x in tables])
+
+    metrics = ['cpu', 'wc']
+    for metric in metrics:
+
+        filename = 'rum_profile/%s.html' % metric
+        print_table(filename, table, [x[0] for x in tables],
+                    [metric], metrics)
 
 def merge_copies(copies):
 
@@ -262,42 +268,66 @@ def calc_gain(table, job_names):
                       )
     return table
 
-def td_hours(seconds):
-    return TD('%.2f' % (seconds / seconds_per_hour))
+def td_hours(seconds, bgcolor=None):
+    if bgcolor is None:
+        return TD('%.2f' % (seconds / seconds_per_hour),
+                  CLASS='numeric')
+    else:
+        return TD('%.2f' % (seconds / seconds_per_hour),
+                  CLASS='numeric',
+                  bgcolor=bgcolor)
 
 def td_percent(pct, bgcolor=None):
     if bgcolor is None:
-        return TD('%.2f%%' % pct)
+        return TD('%.2f%%' % pct,
+                  CLASS='numeric')
     else:
-        return TD('%.2f%%' % pct, bgcolor=bgcolor)
+        return TD('%.2f%%' % pct, bgcolor=bgcolor,
+                  CLASS='numeric')
 
-def print_table(filename, table, job_names):
+metric_names = {
+    'wc' : 'Wallclock',
+    'cpu' : 'CPU'
+}
+
+def gain_pct_to_bgcolor(pct):
+    intensity = 255 * (pct / 100.)
+    if (intensity < 0):
+        intensity = 255 + intensity
+        return '#ff%02x%02x' % (intensity, intensity)
+    else:
+        intensity = 255 - intensity
+        return '#%02xff%02x' % (intensity, intensity)
+        
+def print_table(filename, table, job_names, metrics, all_metrics):
 
     table = calc_gain(table, job_names)
-
-    metrics = ['cpu', 'wc']
 
     baseline = job_names[0]
 
     with open(filename, 'w') as out:
 
-        headers = []
+        top_headers = TR(TH(''))
+        headers    =  TR(TH('Steps')) 
 
         # Build the header row
         for j in job_names:
-            headers.append('%s chunks' % j)
+
+            colspan = 1
+
+            headers.append(TH('chunks'))
             for m in metrics:
-                headers.extend(['%s %s hours' % (j, m), '(%)'])
+                colspan += 2
+                headers.append(TH('hours', colspan='2'))
 
             # All jobs except the baseline get "hours gained" and
             # "percent hours gained" columns
             if j != baseline:
                 for m in metrics:
-                    headers.extend(['%s hours gained' % (m), '(%)'])
+                    colspan += 2
+                    headers.append(TH('improvement', colspan='2'))
 
-        header_row = TR(TH('Step'))        
-        for h in headers:
-            header_row.append(TH(h))
+            top_headers.append(TH(j, colspan=str(colspan)))
 
         data_rows = []
 
@@ -307,18 +337,26 @@ def print_table(filename, table, job_names):
 
             for j in job_names:
 
-                tr.append(TD(str(row['%s_chunks' % j])))
+                tr.append(TD(str(row['%s_chunks' % j]),
+                             CLASS='numeric'))
 
                 for m in metrics:
                     intensity  = row['%s_%s_intensity' % (j, m)]
                     bgcolor  = '#ff%02x%02x' % (intensity, intensity)
-                    tr.append(td_hours(row['%s_%s'  % (j, m)]))
+                    tr.append(td_hours(row['%s_%s'  % (j, m)], bgcolor))
                     tr.append(td_percent(row['%s_%s_pct' % (j, m)], bgcolor))
 
                 if j != baseline:
                     for m in metrics:
-                        tr.append(td_hours(row['%s_%s_gain' % (j, m)]))
-                        tr.append(td_percent(row['%s_%s_pct_gain' % (j, m)]))
+
+                        hours = row['%s_%s_gain' % (j, m)]
+                        pct   = row['%s_%s_pct_gain' % (j, m)]
+
+                        intensity = 255 * (pct / 100.)
+
+                        bgcolor = gain_pct_to_bgcolor(pct)
+                        tr.append(td_hours(hours, bgcolor=bgcolor))
+                        tr.append(td_percent(pct, bgcolor=bgcolor))
 
             data_rows.append(tr)
 
@@ -332,21 +370,67 @@ def print_table(filename, table, job_names):
             
             if j != baseline:
                 for m in metrics:
+                    hours   = sum(table['%s_%s_gain' % (j, m)])
+                    pct     = sum(table['%s_%s_pct_gain' % (j, m)])
+                    bgcolor = gain_pct_to_bgcolor(pct)
                     summary.extend([
-                            td_hours(sum(table['%s_%s_gain' % (j, m)])),
-                            td_percent(sum(table['%s_%s_pct_gain' % (j, m)]))])
+                            td_hours(hours, bgcolor),
+                            td_percent(pct, bgcolor)])
 
-        rows = [header_row]
+        rows = [top_headers, headers]
         rows.extend(data_rows)
         rows.append(TR(*summary))
 
+        links = []
+        my_metrics = set(metrics)
+        for m in all_metrics:
+            name = '%s time' % metric_names[m]
+            if m in my_metrics:
+                links.append(E.STRONG(name))
+            else:
+                href = '%s.html' % m
+                links.append(E.A(name, href=href))
+
+            links.append(E.BR())
+        link_p = E.P(*links)
+
+        cpu_class = 'active' if 'cpu' in my_metrics else ''
+        wc_class  = 'active' if 'wc'  in my_metrics else ''
+
         html = E.HTML(
             E.HEAD(
+                E.LINK(rel='stylesheet', type='text/css', href='css/bootstrap.css'),
                 E.LINK(rel='stylesheet', type='text/css', href='profile.css'),
+                E.SCRIPT(src='js/bootstrap.min.js'),
                 E.TITLE('RUM Job Profile')),
+            link_p,
             E.BODY(
-                E.H1("RUM Job Profile"),
-                E.TABLE(*rows)))
+
+                E.DIV(
+                    E.DIV(
+                        E.DIV(
+                            E.A(E.SPAN(CLASS='icon-bar'),
+                                E.SPAN(CLASS='icon-bar'),
+                                E.SPAN(CLASS='icon-bar'),
+                                CLASS='btn btn-navbar'),
+                            E.A('RUM Profile', CLASS='brand', href='#'),
+                            E.DIV(
+                                E.UL(
+                                    E.LI(
+                                        E.A('CPU time', href='cpu.html'),
+                                        CLASS=cpu_class),
+                                    E.LI(
+                                        E.A('Wallclock time', href='wc.html'),
+                                        CLASS=wc_class),
+                                    
+                                    CLASS='nav'),
+                                CLASS='nav-collapse collapse'),
+                            CLASS='container'),
+                        CLASS='navbar-inner'),
+                    CLASS='navbar navbar-inverse navbar-fixed-top'),
+
+                E.DIV(E.TABLE(*rows),
+                      CLASS='container')))
                 
         out.write(lxml.html.tostring(html))
 
