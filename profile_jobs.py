@@ -171,8 +171,93 @@ def main():
     for metric in metrics:
 
         filename = 'rum_profile/%s.html' % metric
-        print_table(filename, table, [x[0] for x in tables],
-                    [metric], metrics)
+        print_table(filename, table, [x[0] for x in tables], metric)
+
+    print_help_page()
+
+def print_help_page():
+    with open('rum_profile/help.html', 'w') as f:
+        contents = E.DIV(
+            E.P("""
+This shows the amount of time spent on each step for one or more RUM
+jobs. You should be able to use the output to gain some insight into
+the performance of a single job, or to compare the running times for
+two or more jobs in order to understand the effects of changes made to
+the RUM code, to the input data, or to the system on which RUM was
+run."""),
+
+            E.P("""
+The times for a single job are are compiled by parsing the log files
+after the job is finished. For each step, we consider the duration to
+be from the time the script was actually invoked to the time the
+script exited. This means that any latency caused by the cluster's
+scheduling system will not be reflected in the times."""),
+
+            E.P("""
+"CPU time" for a step measures the total time for the step across all
+chunks. If you have grouped multiple jobs together, the CPU time
+reported here is the median value for all the jobs. This is intended
+to show the total amount of computing time the job would take for a
+typical invocation. The total CPU time for the job is the sum of all
+these median values.
+"""),
+
+            E.P("""
+"Wallclock time" for a step is the time of the chunk that took the
+longest time to complete the step. We use the maximum value in order
+model the worst-case scenario, where one of the chunks takes much
+longer than the other chunks, and becomes the limiting factor for the
+running time of the whole job. If you have grouped jobs together,
+wallclock time is the median value for all jobs. This is intended to
+show the maximum duration of a typical invocation of the job."""),
+
+            E.P("""
+The times for all steps are highlighted in varying shades of yelloq in
+order to indicate each step's impact on the total running time,
+relative to the other steps. The step with the longest time is pure
+yellow, the step with the shortest time is pure white, and the colors
+for the other steps are scaled linearly according to the running
+time. This is intended to allow you to quickly identify hot spots, or
+steps that took a very long time compared to other steps, and which
+might benefit from optimization or parameter tuning.
+"""),
+
+            E.P("""
+If you have run two or more job groups, we use the first group as a
+baseline and compare the running time of all the other jobs to the
+baseline. The "improvement" for a step shows the number of hours saved
+relative to the baseline. The percent improvement is the improvement
+divided by the total running time for the baseline job. This is
+intended to show the impact that improving the running time of one
+step has on the running time of the entire job. For example suppose
+the baseline job took 100 hours, 30 of which were spent on the "Run
+BLAT" step, and that the "Run BLAT" step in the comparison job took
+only 20 hours. The improvement is 30 - 20 = 10 hours, and the percent
+improvement is (30 - 20) / 100 = 10%.  If a step in the new job is
+slower, the improvement and percent improvement will be negative."""),
+
+            E.P("""
+The improvement for each step is colored green or red according to the
+degree to which that step improved or degraded the performance
+compared to the baseline."""),
+
+
+            E.P(E.STRONG("Note:"),
+                """
+These numbers do not include the "preprocessing" phase at all. Prior
+to RUM 2.0.3, it is difficult to determine from the log files exactly
+when pre-processing begins and ends. RUM 2.0.3 and greater will
+clearly include these times in the log file, so future versions of the
+profiling program will be able to incorporate times for
+preprocessing.""")
+            )
+        
+
+
+        help_page = template('help',
+                             contents)
+        f.write(lxml.html.tostring(help_page))
+
 
 def merge_copies(copies):
 
@@ -299,7 +384,53 @@ def gain_pct_to_bgcolor(pct):
         intensity = 255 - intensity
         return '#%02xff%02x' % (intensity, intensity)
         
-def print_table(filename, table, job_names, metrics, all_metrics):
+def template(name, contents):
+
+    cpu_class  = 'active' if name == 'cpu'  else ''
+    wc_class   = 'active' if name == 'wc'   else ''
+    help_class = 'active' if name == 'help' else ''
+
+    return E.HTML(
+        E.HEAD(
+            E.LINK(rel='stylesheet', type='text/css', href='css/bootstrap.css'),
+            E.LINK(rel='stylesheet', type='text/css', href='profile.css'),
+            E.SCRIPT(src='js/bootstrap.min.js'),
+            E.TITLE('RUM Job Profile')),
+
+        E.BODY(
+
+            E.DIV(
+                E.DIV(
+                    E.DIV(
+                        E.A(E.SPAN(CLASS='icon-bar'),
+                            E.SPAN(CLASS='icon-bar'),
+                            E.SPAN(CLASS='icon-bar'),
+                            CLASS='btn btn-navbar'),
+                        E.A('RUM Profile', CLASS='brand', href='#'),
+                        E.DIV(
+                            E.UL(
+                                E.LI(
+                                    E.A('CPU time', href='cpu.html'),
+                                    CLASS=cpu_class),
+                                E.LI(
+                                    E.A('Wallclock time', href='wc.html'),
+                                    CLASS=wc_class),
+                                E.LI(
+                                    E.A('Help', href='help.html'),
+                                    CLASS=help_class),
+                                
+                                CLASS='nav'),
+                            CLASS='nav-collapse collapse'),
+                        CLASS='container'),
+                    CLASS='navbar-inner'),
+                CLASS='navbar navbar-inverse navbar-fixed-top'),
+            E.BR(),
+            E.BR(),
+            E.BR(),
+            E.DIV(contents,
+                  CLASS='container')))
+    
+def print_table(filename, table, job_names, metric):
 
     table = calc_gain(table, job_names)
 
@@ -316,16 +447,14 @@ def print_table(filename, table, job_names, metrics, all_metrics):
             colspan = 1
 
             headers.append(TH('chunks'))
-            for m in metrics:
-                colspan += 2
-                headers.append(TH('hours', colspan='2'))
+            colspan += 2
+            headers.append(TH('hours', colspan='2'))
 
             # All jobs except the baseline get "hours gained" and
             # "percent hours gained" columns
             if j != baseline:
-                for m in metrics:
-                    colspan += 2
-                    headers.append(TH('improvement', colspan='2'))
+                colspan += 2
+                headers.append(TH('improvement', colspan='2'))
 
             top_headers.append(TH(j, colspan=str(colspan)))
 
@@ -340,97 +469,44 @@ def print_table(filename, table, job_names, metrics, all_metrics):
                 tr.append(TD(str(row['%s_chunks' % j]),
                              CLASS='numeric'))
 
-                for m in metrics:
-                    intensity  = row['%s_%s_intensity' % (j, m)]
-                    bgcolor  = '#ff%02x%02x' % (intensity, intensity)
-                    tr.append(td_hours(row['%s_%s'  % (j, m)], bgcolor))
-                    tr.append(td_percent(row['%s_%s_pct' % (j, m)], bgcolor))
+                intensity  = row['%s_%s_intensity' % (j, metric)]
+                bgcolor  = '#ffff%02x' % intensity
+                tr.append(td_hours(row['%s_%s'  % (j, metric)], bgcolor))
+                tr.append(td_percent(row['%s_%s_pct' % (j, metric)], bgcolor))
 
                 if j != baseline:
-                    for m in metrics:
+                    hours = row['%s_%s_gain' % (j, metric)]
+                    pct   = row['%s_%s_pct_gain' % (j, metric)]
 
-                        hours = row['%s_%s_gain' % (j, m)]
-                        pct   = row['%s_%s_pct_gain' % (j, m)]
+                    intensity = 255 * (pct / 100.)
 
-                        intensity = 255 * (pct / 100.)
-
-                        bgcolor = gain_pct_to_bgcolor(pct)
-                        tr.append(td_hours(hours, bgcolor=bgcolor))
-                        tr.append(td_percent(pct, bgcolor=bgcolor))
+                    bgcolor = gain_pct_to_bgcolor(pct)
+                    tr.append(td_hours(hours, bgcolor=bgcolor))
+                    tr.append(td_percent(pct, bgcolor=bgcolor))
 
             data_rows.append(tr)
 
         summary = [TD('Totals')]
         for j in job_names:
             summary.append(TD(''))
-            for m in metrics:
-                summary.extend([
-                        td_hours(sum(table['%s_%s' % (j, m)])),
-                        td_percent(sum(table['%s_%s_pct' % (j, m)]))])
+            summary.extend([
+                    td_hours(sum(table['%s_%s' % (j, metric)])),
+                    td_percent(sum(table['%s_%s_pct' % (j, metric)]))])
             
             if j != baseline:
-                for m in metrics:
-                    hours   = sum(table['%s_%s_gain' % (j, m)])
-                    pct     = sum(table['%s_%s_pct_gain' % (j, m)])
-                    bgcolor = gain_pct_to_bgcolor(pct)
-                    summary.extend([
-                            td_hours(hours, bgcolor),
-                            td_percent(pct, bgcolor)])
+                hours   = sum(table['%s_%s_gain' % (j, metric)])
+                pct     = sum(table['%s_%s_pct_gain' % (j, metric)])
+                bgcolor = gain_pct_to_bgcolor(pct)
+                summary.extend([
+                        td_hours(hours, bgcolor),
+                        td_percent(pct, bgcolor)])
 
         rows = [top_headers, headers]
         rows.extend(data_rows)
         rows.append(TR(*summary))
 
-        links = []
-        my_metrics = set(metrics)
-        for m in all_metrics:
-            name = '%s time' % metric_names[m]
-            if m in my_metrics:
-                links.append(E.STRONG(name))
-            else:
-                href = '%s.html' % m
-                links.append(E.A(name, href=href))
-
-            links.append(E.BR())
-        link_p = E.P(*links)
-
-        cpu_class = 'active' if 'cpu' in my_metrics else ''
-        wc_class  = 'active' if 'wc'  in my_metrics else ''
-
-        html = E.HTML(
-            E.HEAD(
-                E.LINK(rel='stylesheet', type='text/css', href='css/bootstrap.css'),
-                E.LINK(rel='stylesheet', type='text/css', href='profile.css'),
-                E.SCRIPT(src='js/bootstrap.min.js'),
-                E.TITLE('RUM Job Profile')),
-            link_p,
-            E.BODY(
-
-                E.DIV(
-                    E.DIV(
-                        E.DIV(
-                            E.A(E.SPAN(CLASS='icon-bar'),
-                                E.SPAN(CLASS='icon-bar'),
-                                E.SPAN(CLASS='icon-bar'),
-                                CLASS='btn btn-navbar'),
-                            E.A('RUM Profile', CLASS='brand', href='#'),
-                            E.DIV(
-                                E.UL(
-                                    E.LI(
-                                        E.A('CPU time', href='cpu.html'),
-                                        CLASS=cpu_class),
-                                    E.LI(
-                                        E.A('Wallclock time', href='wc.html'),
-                                        CLASS=wc_class),
-                                    
-                                    CLASS='nav'),
-                                CLASS='nav-collapse collapse'),
-                            CLASS='container'),
-                        CLASS='navbar-inner'),
-                    CLASS='navbar navbar-inverse navbar-fixed-top'),
-
-                E.DIV(E.TABLE(*rows),
-                      CLASS='container')))
+        html = template(metric, E.DIV(
+                E.TABLE(*rows)))
                 
         out.write(lxml.html.tostring(html))
 
