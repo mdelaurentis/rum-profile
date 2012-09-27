@@ -201,7 +201,6 @@ def make_final_table(jobs):
     result = np.array(steps, dtype=[('step', 'S100')])
 
     for (name, table) in jobs:
-        print "Name is " + name
         
         result = append_fields(
             result,
@@ -266,27 +265,22 @@ def print_table(filename, table, job_names):
 
     table = calc_gain(table, job_names)
 
-    newout = open("rum_profile/foo.html", 'w')
+    metrics = ['cpu', 'wc']
 
     with open(filename, 'w') as out:
 
         is_first = True
 
-
-
         headers = []
 
         for j in job_names:
-            headers.extend(['%s chunks' % j,
-                            '%s CPU hours' % j,
-                            '(%)',
-                            '%s wallclock hours' % j,
-                            '(%)'])
+            headers.append('%s chunks' % j)
+            for m in metrics:
+                headers.extend(['%s %s hours' % (j, m), '(%)'])
             if not is_first:
-                headers.extend(['CPU hours gained',
-                                '(%)',
-                                'Wallclock hours gained',
-                                '(%)'])
+                for m in metrics:
+                    headers.extend(['%s hours gained' % (m), '(%)'])
+
             is_first = False
 
         header_row = E.TR(E.TH('Step'))        
@@ -356,6 +350,6 @@ def print_table(filename, table, job_names):
                 E.H1("RUM Job Profile"),
                 E.TABLE(*rows)))
                 
-        newout.write(lxml.html.tostring(html))
+        out.write(lxml.html.tostring(html))
 
 main()
