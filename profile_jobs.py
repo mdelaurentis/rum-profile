@@ -4,6 +4,7 @@ import re
 import sys
 import time
 import os
+from subprocess import call
 from lxml.html import builder as E
 from lxml.html.builder import TR, TD, TH
 import lxml
@@ -13,6 +14,7 @@ from collections import namedtuple
 from numpy.lib.recfunctions import append_fields
 
 seconds_per_hour = 60.0 * 60.0
+output_dir = 'rum_profile'
 
 Event = namedtuple('Event', 'timestamp type step job')
 Proc  = namedtuple('Proc', 'step start stop job')
@@ -167,6 +169,12 @@ def main():
 
     table = make_final_table(tables)
 
+
+    if not os.path.isdir(output_dir):
+        os.mkdir(output_dir)
+    call(['unzip', 'bootstrap.zip', '-d', output_dir])
+    call(['cp', 'profile.css', output_dir])
+
     metrics = ['cpu', 'wc']
     for metric in metrics:
 
@@ -251,8 +259,6 @@ clearly include these times in the log file, so future versions of the
 profiling program will be able to incorporate times for
 preprocessing.""")
             )
-        
-
 
         help_page = template('help',
                              contents)
@@ -392,9 +398,9 @@ def template(name, contents):
 
     return E.HTML(
         E.HEAD(
-            E.LINK(rel='stylesheet', type='text/css', href='css/bootstrap.css'),
+            E.LINK(rel='stylesheet', type='text/css', href='bootstrap/css/bootstrap.css'),
             E.LINK(rel='stylesheet', type='text/css', href='profile.css'),
-            E.SCRIPT(src='js/bootstrap.min.js'),
+            E.SCRIPT(src='bootstrap/js/bootstrap.min.js'),
             E.TITLE('RUM Job Profile')),
 
         E.BODY(

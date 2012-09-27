@@ -1,0 +1,7 @@
+body {
+  font-family: "baskerville", "gill sans", "serif";
+}
+
+td.numeric {
+    text-align: right;
+}

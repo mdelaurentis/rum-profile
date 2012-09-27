@@ -7,7 +7,7 @@ NEW=~/profile/heatmap/v2.0.3
 download : $(OLD)-job01 $(NEW)-job01
 
 clean :
-	rm -rf $(OLD)-* $(NEW)-*
+	rm -rf $(OLD)-* $(NEW)-* *~ *.pyc
 
 $(OLD)-% :
 	rm -rf $@
