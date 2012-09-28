@@ -9,14 +9,13 @@ from lxml.html import builder as E
 from lxml.html.builder import TR, TD, TH
 import lxml
 
-
 from collections import namedtuple
 from numpy.lib.recfunctions import append_fields
 
 seconds_per_hour = 60.0 * 60.0
 output_dir = 'rum_profile'
 
-Event = namedtuple('Event', 'timestamp type step job')
+Event = namedtuple('Event', 'timestamp type step job source')
 Proc  = namedtuple('Proc', 'step start stop job')
 
 step_mapping = {
@@ -47,18 +46,38 @@ def parse_log_file(filename, job_name):
     from the file."""
 
     time_re = "(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})"
+    time_pat = re.compile(time_re)
     pat = re.compile(time_re + ".*RUM\.Workflow.*(START|FINISH)\s+(.*)")
+
+    time_fmt = "%Y/%m/%d %H:%M:%S"
+
+    first_time = None
     
     with open(filename) as f:
         for line in f:
+            if first_time is None:
+                m = time_pat.match(line)
+                if m is None:
+                    raise Exception("Couldn't parse time from " + line)
+                tm = m.group(1)
+                print "TM is " + str(tm)
+                first_time = time.strptime(tm, time_fmt)
+                print "First time is " + str(first_time)
+
+                yield Event(first_time, 'START', 'log', job_name, filename)
             m = pat.match(line)
             if (m is not None):
                 (tm, type, step) = m.groups()
-                t = time.strptime(tm, "%Y/%m/%d %H:%M:%S")
-                e = Event(t, type, step, job_name)
+                t = time.strptime(tm, time_fmt)
+                e = Event(t, type, step, job_name, filename)
                 yield e
 
 def build_timings(events):
+
+    """Given a list of events, match each START events to its
+corresponding FINISH event and return an iterator over the resulting
+Proc objects."""
+
     stack = []
     timings = []
     for e in events:
@@ -73,7 +92,7 @@ def build_timings(events):
             yield Proc(e.step, prev.timestamp, e.timestamp, e.job)
 
 def append_filenames(dest, dirname, filenames):
-    pat = re.compile("rum_(postproc|\d+).*log$")
+    pat = re.compile("(rum_(postproc|\d+).*log)|(rum.log)$")
     for filename in filenames:
         if pat.match(filename):
             dest.append(dirname + "/" + filename)
@@ -139,6 +158,12 @@ def rename_steps(step_to_times):
             result[new_step] = times
     return result
 
+def infer_preproc_from_events(events):
+    log_starts = [e for e in events if e.step == 'log']
+    log_starts = sorted(log_starts, key=lambda x: x.timestamp)
+    (start, stop) = log_starts[0:2]
+    return Proc('Pre-processing', start.timestamp, stop.timestamp, start.job)
+
 def main():
 
     jobs = []
@@ -151,7 +176,10 @@ def main():
     stats = {}
 
     for (job_name, dir) in jobs:
-        procs = list(build_timings(load_events_for_job(dir, job_name)))
+        events = list(load_events_for_job(dir, job_name))
+        preproc = infer_preproc_from_events(events)
+        procs = list(build_timings(events))
+        procs = [preproc] + procs
         job_stats = procs_to_array(procs)
         if job_name not in stats:
             stats[job_name] = []
